@@ -282,7 +282,7 @@
     <button type="button" id="sidebarExpandBtn" class="panelExpandBtn" data-ko="Load STEP file &amp; Measure" data-en="Load STEP file &amp; Measure">Load STEP file &amp; Measure</button>
     <div id="sidebarContent">
     <div style="display:flex;align-items:center;justify-content:space-between;position:relative;">
-      <h1>Chasys STEP file Viewer v3.31</h1>
+      <h1>Chasys STEP file Viewer v3.32</h1>
       <div style="display:flex;gap:4px;">
         <button type="button" id="manualBtn" title="Manual">&#10067;</button>
         <button type="button" id="settingsBtn" title="Settings">&#9881;</button>
@@ -5350,11 +5350,18 @@ function loadXLSX(cb){
   if(_xlsxLoaded){cb();return;}
   _xlsxCbs.push(cb);
   if(_xlsxCbs.length>1)return;
-  var s=document.createElement('script');
-  s.src='https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
-  s.onload=function(){_xlsxLoaded=true;_xlsxCbs.forEach(function(f){f();});_xlsxCbs=[];};
-  s.onerror=function(){alert('Failed to load Excel library. Check network connection.');};
-  document.head.appendChild(s);
+  // 오프라인 사용을 위해 앱과 함께 배포한 로컬 파일(./xlsx.full.min.js)을 먼저
+  // 시도하고, 로컬 파일이 없을 때(단일 HTML 파일로 열었을 때 등)만 CDN으로 대체.
+  var sources=['./xlsx.full.min.js','https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js'];
+  function tryLoad(n){
+    if(n>=sources.length){alert('Failed to load Excel library. Check network connection.');_xlsxCbs=[];return;}
+    var s=document.createElement('script');
+    s.src=sources[n];
+    s.onload=function(){_xlsxLoaded=true;_xlsxCbs.forEach(function(f){f();});_xlsxCbs=[];};
+    s.onerror=function(){s.remove();tryLoad(n+1);};
+    document.head.appendChild(s);
+  }
+  tryLoad(0);
 }
 
 function exportBOM(idx){
@@ -5414,9 +5421,30 @@ function initSizeData(filename, rawText) {
 
 </script>
 <script>
-/* PWA: 서비스워커 등록 (http/https에서만 동작, 로컬 파일에서는 건너뜀) */
+/* PWA 오프라인 지원: 서비스워커가 앱 전체(+Excel 라이브러리)를 기기에 저장해 두고
+   인터넷이 없어도 열리게 한다. http/https에서만 동작(로컬 파일로 열면 건너뜀). */
 if('serviceWorker' in navigator && /^https?:$/.test(location.protocol)){
-  window.addEventListener('load', function(){ navigator.serviceWorker.register('./sw.js').catch(function(){}); });
+  window.addEventListener('load', function(){
+    var firstInstall = !navigator.serviceWorker.controller;
+    function note(msg, ms){
+      if(typeof setStatus === 'function'){ setStatus(msg, 'ok'); setTimeout(function(){ setStatus('', ''); }, ms || 6000); }
+    }
+    navigator.serviceWorker.register('./sw.js').then(function(reg){
+      reg.addEventListener('updatefound', function(){
+        var nw = reg.installing;
+        if(!nw) return;
+        nw.addEventListener('statechange', function(){
+          if(nw.state === 'installed' && navigator.serviceWorker.controller)
+            note('새 버전이 준비되었습니다. 앱을 완전히 닫았다가 다시 열면 적용됩니다.', 10000);
+        });
+      });
+    }).catch(function(){});
+    navigator.serviceWorker.ready.then(function(){
+      if(firstInstall) note('오프라인 사용 준비 완료 (이제 인터넷 없이도 실행됩니다)', 8000);
+    });
+    // 저장 공간이 부족해도 브라우저가 앱 파일을 임의로 지우지 않도록 요청
+    if(navigator.storage && navigator.storage.persist){ navigator.storage.persist().catch(function(){}); }
+  });
 }
 </script>
 </body>
