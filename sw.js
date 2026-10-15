@@ -1,6 +1,11 @@
 // 새 버전을 올릴 때마다 CACHE 이름의 버전을 바꿔야 폰이 새 파일을 받습니다.
 // (index.html 안의 APP_CACHE 값도 같은 이름으로 맞춰야 진단 화면이 정확합니다.)
-const CACHE = 'step-viewer-v3.33';
+//
+// 중요: 같은 주소(oiouoeh.github.io)에 올린 다른 앱(3D Packing 등)과 저장소(Cache Storage)를 공유합니다.
+// 정리할 때는 내 접두어('step-viewer-')가 붙은 것만 지워야 합니다.
+// ("내 이름이 아닌 건 전부 삭제" 방식은 다른 앱의 오프라인 저장본을 지워버립니다.)
+const PREFIX = 'step-viewer-';
+const CACHE = PREFIX + 'v3.33';
 const OPTIONAL = ['./manifest.webmanifest', './icon-192.png', './icon-512.png', './xlsx.full.min.js'];
 
 self.addEventListener('install', e => {
@@ -17,7 +22,7 @@ self.addEventListener('install', e => {
 
 self.addEventListener('activate', e => {
   e.waitUntil(caches.keys()
-    .then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))
+    .then(keys => Promise.all(keys.filter(k => k.indexOf(PREFIX) === 0 && k !== CACHE).map(k => caches.delete(k))))
     .then(() => self.clients.claim()));
 });
 
