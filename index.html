@@ -282,7 +282,7 @@
     <button type="button" id="sidebarExpandBtn" class="panelExpandBtn" data-ko="Load STEP file &amp; Measure" data-en="Load STEP file &amp; Measure">Load STEP file &amp; Measure</button>
     <div id="sidebarContent">
     <div style="display:flex;align-items:center;justify-content:space-between;position:relative;">
-      <h1>Chasys STEP file Viewer v3.32</h1>
+      <h1>Chasys STEP file Viewer v3.33</h1>
       <div style="display:flex;gap:4px;">
         <button type="button" id="manualBtn" title="Manual">&#10067;</button>
         <button type="button" id="settingsBtn" title="Settings">&#9881;</button>
@@ -314,6 +314,13 @@
             <button type="button" class="secondary" id="fontSizeUpBtn">&#x2b;</button>
           </div>
         </div>
+        <h3 style="margin-top:12px;">Offline</h3>
+        <div class="settingsRow" style="margin-bottom:6px;">
+          <label>오프라인 저장 상태</label>
+          <button type="button" class="secondary" id="offlineCheckBtn"><span id="offlineDot" style="color:#9aa3b5;">&#9679;</span> 확인</button>
+        </div>
+        <pre id="offlineInfo" style="display:none;margin:0 0 6px 0;font-size:0.6875rem;line-height:1.45;white-space:pre-wrap;word-break:break-all;color:var(--muted);"></pre>
+        <button type="button" class="secondary" id="offlineResetBtn" style="display:none;width:100%;font-size:0.75rem;">저장 초기화 후 다시 받기 (인터넷 필요)</button>
       </div>
     </div>
 
@@ -5421,14 +5428,75 @@ function initSizeData(filename, rawText) {
 
 </script>
 <script>
-/* PWA 오프라인 지원: 서비스워커가 앱 전체(+Excel 라이브러리)를 기기에 저장해 두고
-   인터넷이 없어도 열리게 한다. http/https에서만 동작(로컬 파일로 열면 건너뜀). */
-if('serviceWorker' in navigator && /^https?:$/.test(location.protocol)){
-  window.addEventListener('load', function(){
-    var firstInstall = !navigator.serviceWorker.controller;
-    function note(msg, ms){
-      if(typeof setStatus === 'function'){ setStatus(msg, 'ok'); setTimeout(function(){ setStatus('', ''); }, ms || 6000); }
+/* PWA 오프라인 지원: 서비스워커가 앱을 기기에 저장해 두고 인터넷이 없어도(또는 서버의
+   파일이 지워져도) 저장된 본체를 열어 준다. http/https에서만 동작(로컬 파일은 건너뜀). */
+var APP_CACHE = 'step-viewer-v3.33';
+(function(){
+  var supported = ('serviceWorker' in navigator) && /^https?:$/.test(location.protocol);
+  function note(msg, ms){
+    if(typeof setStatus === 'function'){ setStatus(msg, 'ok'); setTimeout(function(){ setStatus('', ''); }, ms || 6000); }
+  }
+  async function diagnose(){
+    var L = [], level = 'red';
+    L.push('주소: ' + location.href);
+    L.push('보안 컨텍스트(https): ' + (window.isSecureContext ? '예' : '아니오'));
+    if(!('serviceWorker' in navigator)){ L.push('이 브라우저는 서비스워커를 지원하지 않음'); return {text:L.join('\n'), level:'red'}; }
+    if(!/^https?:$/.test(location.protocol)){ L.push('로컬 파일로 열림 -> 오프라인 저장 불가 (설치한 주소로 열어야 함)'); return {text:L.join('\n'), level:'red'}; }
+    var reg = null;
+    try{ reg = await navigator.serviceWorker.getRegistration(); }catch(err){ L.push('등록 조회 오류: ' + err.message); }
+    L.push('서비스워커 등록: ' + (reg ? '예' : '아니오'));
+    if(reg){
+      var w = reg.active ? 'active' : (reg.waiting ? 'waiting' : (reg.installing ? 'installing(설치 중)' : '없음'));
+      L.push('상태: ' + w + ' / 현재 페이지 제어: ' + (navigator.serviceWorker.controller ? '예' : '아니오'));
     }
+    var hasIndex = false, n = 0;
+    try{
+      var names = await caches.keys();
+      L.push('저장소: ' + (names.join(', ') || '(없음)'));
+      if(names.indexOf(APP_CACHE) >= 0){
+        var cache = await caches.open(APP_CACHE);
+        var keys = await cache.keys();
+        n = keys.length;
+        keys.forEach(function(r){ if(/index\.html$|\/$/.test(new URL(r.url).pathname)) hasIndex = true; });
+        L.push('저장된 파일 ' + n + '개: ' + keys.map(function(r){ return new URL(r.url).pathname.split('/').pop() || '(index)'; }).join(', '));
+      }
+    }catch(err){ L.push('저장소 조회 오류: ' + err.message); }
+    try{
+      if(navigator.storage && navigator.storage.estimate){
+        var est = await navigator.storage.estimate();
+        L.push('저장 공간: ' + Math.round((est.usage||0)/1048576) + 'MB 사용 / 허용 ' + Math.round((est.quota||0)/1048576) + 'MB');
+      }
+    }catch(err){}
+    if(hasIndex && navigator.serviceWorker.controller) level = 'green';
+    else if(hasIndex) level = 'yellow';
+    L.push(level === 'green' ? '=> 오프라인 사용 가능' :
+           level === 'yellow' ? '=> 저장은 됐지만 아직 이 페이지를 제어하지 않음. 앱을 완전히 닫았다가 다시 여세요' :
+           '=> 오프라인 저장이 안 되어 있음. 인터넷이 되는 곳에서 "저장 초기화 후 다시 받기"를 누르세요');
+    return {text:L.join('\n'), level:level};
+  }
+  async function runCheck(){
+    var out = await diagnose();
+    var dot = document.getElementById('offlineDot'), info = document.getElementById('offlineInfo'), rb = document.getElementById('offlineResetBtn');
+    if(dot) dot.style.color = out.level === 'green' ? '#3ecf8e' : out.level === 'yellow' ? '#f7b84f' : '#f76a6a';
+    if(info){ info.style.display = 'block'; info.textContent = out.text; }
+    if(rb) rb.style.display = supported ? 'block' : 'none';
+    return out;
+  }
+  async function resetAndReload(){
+    try{
+      var regs = await navigator.serviceWorker.getRegistrations();
+      for(var i=0;i<regs.length;i++) await regs[i].unregister();
+      var names = await caches.keys();
+      for(var j=0;j<names.length;j++) await caches.delete(names[j]);
+    }catch(err){}
+    location.reload();
+  }
+  window.addEventListener('load', function(){
+    var cb = document.getElementById('offlineCheckBtn'), rb = document.getElementById('offlineResetBtn');
+    if(cb) cb.addEventListener('click', runCheck);
+    if(rb) rb.addEventListener('click', function(){ if(confirm('저장된 앱을 지우고 다시 받습니다. 인터넷이 연결되어 있어야 합니다. 계속할까요?')) resetAndReload(); });
+    if(!supported) return;
+    var firstInstall = !navigator.serviceWorker.controller;
     navigator.serviceWorker.register('./sw.js').then(function(reg){
       reg.addEventListener('updatefound', function(){
         var nw = reg.installing;
@@ -5438,14 +5506,19 @@ if('serviceWorker' in navigator && /^https?:$/.test(location.protocol)){
             note('새 버전이 준비되었습니다. 앱을 완전히 닫았다가 다시 열면 적용됩니다.', 10000);
         });
       });
-    }).catch(function(){});
-    navigator.serviceWorker.ready.then(function(){
-      if(firstInstall) note('오프라인 사용 준비 완료 (이제 인터넷 없이도 실행됩니다)', 8000);
+    }).catch(function(err){ note('오프라인 저장 등록 실패: ' + err.message, 12000); });
+    navigator.serviceWorker.ready.then(async function(){
+      // 설치가 끝났어도 실제로 본체가 저장됐는지 확인한 뒤에만 "준비 완료"를 알린다
+      try{
+        var cache = await caches.open(APP_CACHE);
+        var hit = await cache.match('./index.html');
+        if(hit){ if(firstInstall) note('오프라인 사용 준비 완료 (이제 인터넷 없이도 실행됩니다)', 8000); }
+        else note('오프라인 저장이 아직 완료되지 않았습니다. 설정(⚙) > Offline에서 확인하세요.', 12000);
+      }catch(err){}
     });
-    // 저장 공간이 부족해도 브라우저가 앱 파일을 임의로 지우지 않도록 요청
     if(navigator.storage && navigator.storage.persist){ navigator.storage.persist().catch(function(){}); }
   });
-}
+})();
 </script>
 </body>
 </html>
